@@ -4,8 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Formation Progress</title>
-  <!-- Monday SDK -->
-  <script src="https://cdn.monday.com/apps-sdk/v0.3/monday-sdk-js.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -36,10 +34,10 @@
     .chart-wrapper {
       background: white;
       border-radius: 8px;
-      padding: 20px;
+      padding: 20px 20px 60px 20px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.06);
       position: relative;
-      height: 300px;
+      height: 340px;
     }
     .state {
       position: absolute;
@@ -76,6 +74,44 @@
     }
     .legend-dot { width: 12px; height: 12px; border-radius: 3px; }
     canvas { display: none; }
+
+    /* Avatars sous le graphe */
+    .avatars-row {
+      display: flex;
+      position: absolute;
+      bottom: 8px;
+      left: 0;
+      right: 0;
+      pointer-events: none;
+    }
+    .avatar-slot {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid white;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    }
+    .avatar-initials {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #0073ea;
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid white;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    }
   </style>
 </head>
 <body>
@@ -92,6 +128,7 @@
       <span>Chargement...</span>
     </div>
     <canvas id="chart"></canvas>
+    <div class="avatars-row" id="avatars-row"></div>
   </div>
 
   <div class="legend">
@@ -101,11 +138,10 @@
   </div>
 
   <script>
-    // ← Remplace par l'URL de ton Apps Script doGet déployé
     const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyM43IyR7kG27IvPug5s2-rEsIQfPCOuL2KIvwI7fzVRpFhn5j4_mj_IhTXLoTtnVR6/exec";
 
-    let chart       = null;
-    let allData     = {};
+    let chart        = null;
+    let allData      = {};
     let currentBoard = "MOP";
 
     // ─── CHARGEMENT ──────────────────────────────────────────
@@ -116,7 +152,7 @@
         const boards = ["MOP", "Procédures", "Formation Equipement"];
         const results = await Promise.all(
           boards.map(b =>
-            fetch(`${APPS_SCRIPT_URL}?data=true&board=${encodeURIComponent(b)}`)
+            fetch(`${APPS_SCRIPT_URL}?board=${encodeURIComponent(b)}`)
               .then(r => r.json())
               .then(data => ({ [b]: data }))
           )
@@ -134,15 +170,17 @@
       const data = allData[boardName];
       if (!data || !data.employees || data.employees.length === 0) {
         showState("empty", "Aucune donnée pour " + boardName);
+        renderAvatars([]);
         return;
       }
 
       hideState();
 
-      const labels  = data.employees.map(e => e.name);
-      const formes  = data.employees.map(e => e.forme);
-      const enCours = data.employees.map(e => e.enCours);
-      const nonCom  = data.employees.map(e => e.nonCommence);
+      const employees = data.employees;
+      const labels    = employees.map(e => e.name.split(" ")[0]); // prénom seulement
+      const formes    = employees.map(e => e.forme);
+      const enCours   = employees.map(e => e.enCours);
+      const nonCom    = employees.map(e => e.nonCommence);
 
       if (chart) chart.destroy();
 
@@ -164,14 +202,77 @@
             tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw} items` } }
           },
           scales: {
-            x: { stacked: true, grid: { display: false } },
-            y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: "#f0f0f0" } }
+            x: {
+              stacked: true,
+              grid: { display: false },
+              ticks: { display: false } // on cache les labels texte, on met les avatars
+            },
+            y: {
+              stacked: true,
+              beginAtZero: true,
+              ticks: { stepSize: 1 },
+              grid: { color: "#f0f0f0" }
+            }
           },
           onClick: (_, elements) => {
-            if (elements.length > 0) showDetail(data.employees[elements[0].index]);
+            if (elements.length > 0) showDetail(employees[elements[0].index]);
+          },
+          animation: {
+            onComplete: () => renderAvatars(employees)
           }
         }
       });
+    }
+
+    // ─── AVATARS ─────────────────────────────────────────────
+
+    function renderAvatars(employees) {
+      const avatarsRow = document.getElementById("avatars-row");
+      avatarsRow.innerHTML = "";
+
+      if (!chart || employees.length === 0) return;
+
+      const meta      = chart.getDatasetMeta(0);
+      const canvas    = document.getElementById("chart");
+      const canvasRect = canvas.getBoundingClientRect();
+      const wrapRect   = canvas.parentElement.getBoundingClientRect();
+
+      employees.forEach((emp, i) => {
+        const bar = meta.data[i];
+        if (!bar) return;
+
+        const x    = bar.x;
+        const slot = document.createElement("div");
+        slot.className = "avatar-slot";
+        slot.style.position = "absolute";
+        slot.style.left = (x - 14 + (canvas.offsetLeft || 0)) + "px";
+
+        if (emp.photo) {
+          const img = document.createElement("img");
+          img.className = "avatar";
+          img.src = emp.photo;
+          img.alt = emp.name;
+          img.onerror = () => {
+            img.replaceWith(makeInitials(emp.name));
+          };
+          slot.appendChild(img);
+        } else {
+          slot.appendChild(makeInitials(emp.name));
+        }
+
+        avatarsRow.appendChild(slot);
+      });
+    }
+
+    function makeInitials(name) {
+      const parts    = name.trim().split(" ");
+      const initials = parts.length >= 2
+        ? parts[0][0] + parts[1][0]
+        : parts[0].slice(0, 2);
+      const div = document.createElement("div");
+      div.className = "avatar-initials";
+      div.textContent = initials.toUpperCase();
+      return div;
     }
 
     // ─── DÉTAIL ───────────────────────────────────────────────
@@ -207,29 +308,21 @@
       const canvas = document.getElementById("chart");
       canvas.style.display = "none";
       state.style.display  = "flex";
-      if (type === "loading") {
-        state.innerHTML = '<div class="spinner"></div><span>Chargement...</span>';
-      } else {
-        state.innerHTML = `<span>${msg || "Aucune donnée"}</span>`;
-      }
+      document.getElementById("avatars-row").innerHTML = "";
+      state.innerHTML = type === "loading"
+        ? '<div class="spinner"></div><span>Chargement...</span>'
+        : `<span>${msg || "Aucune donnée"}</span>`;
     }
 
     function hideState() {
-      document.getElementById("state").style.display  = "none";
-      document.getElementById("chart").style.display  = "block";
+      document.getElementById("state").style.display = "none";
+      document.getElementById("chart").style.display = "block";
     }
 
-    // ─── REFRESH AUTO (toutes les 60s) ───────────────────────
+    // ─── REFRESH AUTO ────────────────────────────────────────
     setInterval(loadAllData, 60000);
-
-    // Chargement initial
     loadAllData();
   </script>
 
 </body>
-<script>
-  // Initialisation Monday SDK — requis pour les custom widgets
-  const monday = window.mondaySdk();
-  monday.execute("valueCreatedForUser");
-</script>
 </html>
