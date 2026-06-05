@@ -31,14 +31,19 @@
     }
     .tab.active { background: #0073ea; color: white; }
     .tab:hover:not(.active) { background: #d0d4e4; }
-    .chart-wrapper {
+
+    .chart-outer {
       background: white;
       border-radius: 8px;
-      padding: 20px 20px 60px 20px;
+      padding: 20px 20px 0 20px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-      position: relative;
-      height: 340px;
     }
+
+    .chart-area {
+      position: relative;
+      height: 280px;
+    }
+
     .state {
       position: absolute;
       inset: 0;
@@ -59,6 +64,51 @@
       animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    canvas { display: none; width: 100% !important; }
+
+    /* Rangée avatars + noms */
+    .x-labels {
+      display: flex;
+      padding: 8px 0 12px 0;
+    }
+    .x-label-slot {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      flex: 1;
+    }
+    .avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid #e6e9ef;
+    }
+    .avatar-initials {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: #0073ea;
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid #e6e9ef;
+    }
+    .emp-name {
+      font-size: 11px;
+      color: #676879;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 60px;
+    }
+
     .legend {
       display: flex;
       gap: 20px;
@@ -73,45 +123,6 @@
       color: #676879;
     }
     .legend-dot { width: 12px; height: 12px; border-radius: 3px; }
-    canvas { display: none; }
-
-    /* Avatars sous le graphe */
-    .avatars-row {
-      display: flex;
-      position: absolute;
-      bottom: 8px;
-      left: 0;
-      right: 0;
-      pointer-events: none;
-    }
-    .avatar-slot {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-    }
-    .avatar {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      object-fit: cover;
-      border: 2px solid white;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-    }
-    .avatar-initials {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: #0073ea;
-      color: white;
-      font-size: 11px;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border: 2px solid white;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-    }
   </style>
 </head>
 <body>
@@ -122,13 +133,15 @@
     <button class="tab" onclick="switchBoard('Formation Equipement', this)">Formation</button>
   </div>
 
-  <div class="chart-wrapper">
-    <div class="state" id="state">
-      <div class="spinner"></div>
-      <span>Chargement...</span>
+  <div class="chart-outer">
+    <div class="chart-area">
+      <div class="state" id="state">
+        <div class="spinner"></div>
+        <span>Chargement...</span>
+      </div>
+      <canvas id="chart"></canvas>
     </div>
-    <canvas id="chart"></canvas>
-    <div class="avatars-row" id="avatars-row"></div>
+    <div class="x-labels" id="x-labels"></div>
   </div>
 
   <div class="legend">
@@ -147,9 +160,8 @@
     // ─── CHARGEMENT ──────────────────────────────────────────
 
     async function loadAllData() {
-      showState("loading");
       try {
-        const boards = ["MOP", "Procédures", "Formation Equipement"];
+        const boards  = ["MOP", "Procédures", "Formation Equipement"];
         const results = await Promise.all(
           boards.map(b =>
             fetch(`${APPS_SCRIPT_URL}?board=${encodeURIComponent(b)}`)
@@ -170,14 +182,14 @@
       const data = allData[boardName];
       if (!data || !data.employees || data.employees.length === 0) {
         showState("empty", "Aucune donnée pour " + boardName);
-        renderAvatars([]);
+        renderXLabels([]);
         return;
       }
 
       hideState();
 
       const employees = data.employees;
-      const labels    = employees.map(e => e.name.split(" ")[0]); // prénom seulement
+      const labels    = employees.map(() => ""); // labels vides — on utilise les avatars
       const formes    = employees.map(e => e.forme);
       const enCours   = employees.map(e => e.enCours);
       const nonCom    = employees.map(e => e.nonCommence);
@@ -199,68 +211,56 @@
           maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
-            tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw} items` } }
+            tooltip: {
+              callbacks: {
+                title: ctx => employees[ctx[0].dataIndex].name,
+                label: ctx => `${ctx.dataset.label}: ${ctx.raw} items`
+              }
+            }
           },
           scales: {
-            x: {
-              stacked: true,
-              grid: { display: false },
-              ticks: { display: false } // on cache les labels texte, on met les avatars
-            },
-            y: {
-              stacked: true,
-              beginAtZero: true,
-              ticks: { stepSize: 1 },
-              grid: { color: "#f0f0f0" }
-            }
+            x: { stacked: true, grid: { display: false } },
+            y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: "#f0f0f0" } }
           },
           onClick: (_, elements) => {
             if (elements.length > 0) showDetail(employees[elements[0].index]);
-          },
-          animation: {
-            onComplete: () => renderAvatars(employees)
           }
         }
       });
+
+      renderXLabels(employees);
     }
 
-    // ─── AVATARS ─────────────────────────────────────────────
+    // ─── AVATARS + NOMS ──────────────────────────────────────
 
-    function renderAvatars(employees) {
-      const avatarsRow = document.getElementById("avatars-row");
-      avatarsRow.innerHTML = "";
+    function renderXLabels(employees) {
+      const container = document.getElementById("x-labels");
+      container.innerHTML = "";
 
-      if (!chart || employees.length === 0) return;
-
-      const meta      = chart.getDatasetMeta(0);
-      const canvas    = document.getElementById("chart");
-      const canvasRect = canvas.getBoundingClientRect();
-      const wrapRect   = canvas.parentElement.getBoundingClientRect();
-
-      employees.forEach((emp, i) => {
-        const bar = meta.data[i];
-        if (!bar) return;
-
-        const x    = bar.x;
+      employees.forEach(emp => {
         const slot = document.createElement("div");
-        slot.className = "avatar-slot";
-        slot.style.position = "absolute";
-        slot.style.left = (x - 14 + (canvas.offsetLeft || 0)) + "px";
+        slot.className = "x-label-slot";
 
+        // Avatar
         if (emp.photo) {
           const img = document.createElement("img");
           img.className = "avatar";
           img.src = emp.photo;
           img.alt = emp.name;
-          img.onerror = () => {
-            img.replaceWith(makeInitials(emp.name));
-          };
+          img.onerror = () => img.replaceWith(makeInitials(emp.name));
           slot.appendChild(img);
         } else {
           slot.appendChild(makeInitials(emp.name));
         }
 
-        avatarsRow.appendChild(slot);
+        // Nom
+        const nameEl = document.createElement("div");
+        nameEl.className = "emp-name";
+        nameEl.textContent = emp.name.split(" ")[0]; // prénom
+        nameEl.title = emp.name; // nom complet au survol
+        slot.appendChild(nameEl);
+
+        container.appendChild(slot);
       });
     }
 
@@ -294,11 +294,7 @@
       document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
       btn.classList.add("active");
       currentBoard = boardName;
-      if (allData[boardName]) {
-        renderChart(boardName);
-      } else {
-        showState("loading");
-      }
+      renderChart(boardName);
     }
 
     // ─── ÉTATS UI ────────────────────────────────────────────
@@ -308,7 +304,7 @@
       const canvas = document.getElementById("chart");
       canvas.style.display = "none";
       state.style.display  = "flex";
-      document.getElementById("avatars-row").innerHTML = "";
+      document.getElementById("x-labels").innerHTML = "";
       state.innerHTML = type === "loading"
         ? '<div class="spinner"></div><span>Chargement...</span>'
         : `<span>${msg || "Aucune donnée"}</span>`;
@@ -319,8 +315,9 @@
       document.getElementById("chart").style.display = "block";
     }
 
-    // ─── REFRESH AUTO ────────────────────────────────────────
-    setInterval(loadAllData, 60000);
+    // ─── REFRESH AUTO (10s) ──────────────────────────────────
+    setInterval(loadAllData, 10000);
+    showState("loading");
     loadAllData();
   </script>
 
